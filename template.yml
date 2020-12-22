@@ -1,0 +1,189 @@
+# This is the SAM template that represents the architecture of your serverless application
+# https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-template-basics.html
+
+# The AWSTemplateFormatVersion identifies the capabilities of the template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/format-version-structure.html
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  test-and-trace-notifications
+
+# Transform section specifies one or more macros that AWS CloudFormation uses to process your template
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/transform-section-structure.html
+Transform:
+- AWS::Serverless-2016-10-31
+
+Parameters:
+  NotifyApiKey:
+    Type: String
+    Description: "api key in order to send messages from gov notify"
+    NoEcho: true
+  NotifySmsTemplateId:
+    Type: String
+    Description: "The Id of the sms template in gov notify"
+    NoEcho: true
+  NotifyEmailTemplateId:
+    Type: String
+    Description: "The Id of the email template in gov notify"
+    NoEcho: true
+  NumberOfMessages:
+    Type: Number
+    Default: 10
+    Description: "the number of messages we send per batch"
+  WaitTime:
+    Type: Number
+    Default: 1800
+    Description: "The number of seconds the step function waits for before checking and sending another batch of messages"
+  Stage:
+    Type: String
+    Default: dev
+  OutsystemsCreateAuditHost:
+    Type: String
+    Description: "The url we need to hit in order to mark a communication as sent"
+  OutsystemsCreateAuditPath:
+    Type: String
+    Description: "Api path to mark a communication as sent"
+  OutsystemsApiKey:
+    Type: String
+    Description: "An Api key in order to access they outsystems api"
+
+# Resources declares the AWS resources that you want to include in the stack
+# https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/resources-section-structure.html
+Resources:
+  # Each Lambda function is defined by properties:
+  # https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+
+  SendMessagesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: send-message-batch.handler
+      CodeUri: ./src/send-messages/
+      Runtime: nodejs12.x
+      MemorySize: 128
+      Timeout: 100
+      Description: A lambda function that polls a queue and sends 10 messages
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AmazonSQSFullAccess
+      Environment:
+        Variables:
+          NOTIFY_API_KEY: !Sub
+          - '${NotifyApiKey}'
+          - NotifyApiKey: !Ref NotifyApiKey
+          NOTIFY_SMS_TEMPLATE_ID: !Sub
+          - '${NotifySmsTemplateId}'
+          - NotifySmsTemplateId: !Ref NotifySmsTemplateId
+          NOTIFY_EMAIL_TEMPLATE_ID: !Sub
+          - '${NotifyEmailTemplateId}'
+          - NotifyEmailTemplateId: !Ref NotifyEmailTemplateId
+          QUEUE_URL: !Ref MessageQueue
+          NUMBER_OF_MESSAGES: !Sub
+          - '${NumberOfMessages}'
+          - NumberOfMessages: !Ref NumberOfMessages
+          OUTSYSTEMS_HOST: !Ref OutsystemsCreateAuditHost
+          OUTSYSTEMS_PATH: !Ref OutsystemsCreateAuditPath
+          OUTSYSTEMS_API_KEY: !Ref OutsystemsApiKey
+  
+  CheckQueueFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: check-queue.handler
+      CodeUri: ./src/check-queue/
+      Runtime: nodejs12.x
+      MemorySize: 128
+      Timeout: 100
+      Description: A lambda function that checks whether or not there are messages in the queue and returns true if it is empty
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AmazonSQSFullAccess
+      Environment:
+        Variables:
+          QUEUE_URL: !Ref MessageQueue #allegedly should work
+
+  MessageQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+
+  MessageStepFunction:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      DefinitionUri: ./src/step-function/step-function.json
+      ## have a look at definition substitutions for the wait time
+      DefinitionSubstitutions:
+        SendMessagesFunction: !Ref SendMessagesFunction
+        CheckQueueFunction: !Ref CheckQueueFunction
+        WaitTime: !Ref WaitTime
+      Policies:
+        - AWSLambda_FullAccess
+
+  RunStepFunctionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: run-step-function.handler
+      CodeUri: ./src/run-step-function/
+      Runtime: nodejs12.x
+      MemorySize: 128
+      Timeout: 100
+      Description: A lambda function that checks whether the step function is running and if not runs it
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSStepFunctionsFullAccess
+      Events:
+        RunFunction:
+          Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
+          Properties:
+            RestApiId:
+              Ref: StartBotApi
+            Path: /
+            Method: post
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !GetAtt MessageStepFunction.Arn
+
+  StartBotApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName:
+        Ref: Stage
+      Cors:
+        AllowMethods: "'POST'"
+        AllowOrigin: "'*'"
+      OpenApiVersion: '2.0'
+      Auth:
+        ApiKeyRequired: true
+
+  ## generate apikey
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    Properties:
+      Name: !Sub
+      - '${Stage}-${StackName}-apikey'
+      - Stage: !Ref Stage
+        StackName: !Ref AWS::StackName
+      Description: "Api key for run step function api"
+      Enabled: true
+      StageKeys:
+        - RestApiId: !Ref StartBotApi
+          StageName: !Ref Stage
+
+  ApiUsagePlan:
+    Type: "AWS::ApiGateway::UsagePlan"
+    Properties:
+      ApiStages:
+        - ApiId: !Ref StartBotApi
+          Stage: !Ref Stage
+      Description: !Join [" ", [{"Ref": "AWS::StackName"}, "usage plan"]]
+      Quota:
+        Limit: 100
+        Period: MONTH
+      UsagePlanName: !Join ["", [{"Ref": "AWS::StackName"}, "-usage-plan"]]
+
+  ApiUsagePlanKey:
+    Type: "AWS::ApiGateway::UsagePlanKey"
+    DependsOn: 
+      - StartBotApi
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref ApiUsagePlan
+

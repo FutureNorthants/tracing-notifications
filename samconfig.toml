@@ -1,0 +1,12 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "prod-tandt-notifications"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-1fcvajeue9xxx"
+s3_prefix = "prod-tandt-notifications"
+region = "eu-west-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "NumberOfMessages=\"10\" WaitTime=\"1800\" Stage=\"prod\" OutsystemsCreateAuditHost=\"https://tst-ncc.lgss-digital.co.uk\" OutsystemsCreateAuditPath=\"/NCCContactTracingUI/rest/AuditLog/Create\" OutsystemsApiKey=\"J><],'&;W@zp54k!tGhD\""
+

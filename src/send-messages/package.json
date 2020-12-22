@@ -1,0 +1,16 @@
+{
+  "name": "send-messages",
+  "version": "1.0.0",
+  "description": "",
+  "main": "send-message-batch.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^0.21.0",
+    "notifications-node-client": "^5.0.2",
+    "save": "^2.4.0"
+  }
+}

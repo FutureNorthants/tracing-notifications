@@ -1,0 +1,46 @@
+{
+    "Comment": "A Hello World example of the Amazon States Language using Pass states",
+    "StartAt": "CallLambda",
+    "States": {
+      "CallLambda": {
+        "Type": "Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName":"${SendMessagesFunction}"
+        },
+        "Next": "Wait"
+      },
+      "Wait": {
+        "Type": "Wait",
+        "Seconds": 1800,
+        "Next": "CheckList"
+      },
+      "CheckList":{
+        "Type":"Task",
+        "Resource": "arn:aws:states:::lambda:invoke",
+        "Parameters": {
+          "FunctionName": "${CheckQueueFunction}"
+        },
+        "Next": "More messages?"
+      },
+      "More messages?": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.Payload",
+            "BooleanEquals": true,
+            "Next": "Empty"
+          },
+          {
+            "Variable": "$.Payload",
+            "BooleanEquals": false,
+            "Next": "CallLambda"
+          }
+        ]
+      },
+      "Empty":{
+        "Type": "Pass",
+        "End": true
+      }
+    }
+  }
